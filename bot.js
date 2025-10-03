@@ -1,12 +1,43 @@
 import 'dotenv/config';
+import express from "express";
 import TelegramBot from "node-telegram-bot-api";
 import fetch from "node-fetch";
-import express from "express";
+
+// =================== CONFIGURAÇÃO ===================
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const PORT = process.env.PORT || 10000;
+const BASE_URL = process.env.BASE_URL || `https://telegram-bot-cambio.onrender.com`; // Substitua pelo seu URL no Render
 
 // =================== BOT ===================
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+const bot = new TelegramBot(TELEGRAM_TOKEN);
 
+// Comandos do bot
+bot.onText(/\/start/, (msg) => {
+  const chatId = msg.chat.id;
+  bot.sendMessage(chatId, "👋 Olá! Use /cambio para ver cotação do dia.");
+});
+
+bot.onText(/\/cambio/, async (msg) => {
+  const chatId = msg.chat.id;
+  const loadingMsg = await bot.sendMessage(chatId, "⏳ Buscando cotação...");
+  
+  const rate = await getBRLtoARS();
+  
+  if (rate) {
+    await bot.editMessageText(`💰 <b>${rate} ARS</b>`, {
+      chat_id: chatId,
+      message_id: loadingMsg.message_id,
+      parse_mode: "HTML"
+    });
+  } else {
+    await bot.editMessageText("❌ Erro ao buscar cotação.", {
+      chat_id: chatId,
+      message_id: loadingMsg.message_id
+    });
+  }
+});
+
+// =================== FUNÇÃO COTAÇÃO ===================
 async function getBRLtoARS() {
   try {
     const [brlRes, arsRes] = await Promise.all([
@@ -27,38 +58,17 @@ async function getBRLtoARS() {
   }
 }
 
-// Comandos do bot
-bot.onText(/\/start/, (msg) => {
-  const chatId = msg.chat.id;
-  bot.sendMessage(chatId, "👋 Olá! Use /cambio para ver cotação do dia.");
-});
-
-bot.onText(/\/cambio/, async (msg) => {
-  const chatId = msg.chat.id;
-  const loadingMsg = await bot.sendMessage(chatId, "⏳ Buscando cotação...");
-  const rate = await getBRLtoARS();
-  
-  if (rate) {
-    await bot.editMessageText(`💰 <b>${rate} ARS</b>`, {
-      chat_id: chatId,
-      message_id: loadingMsg.message_id,
-      parse_mode: "HTML"
-    });
-  } else {
-    await bot.editMessageText("❌ Erro ao buscar cotação.", {
-      chat_id: chatId,
-      message_id: loadingMsg.message_id
-    });
-  }
-});
-
-console.log("🤖 Bot iniciado e aguardando comandos...");
-
-// =================== API EXPRESS ===================
+// =================== EXPRESS ===================
 const app = express();
-const PORT = process.env.PORT || 3000;
+app.use(express.json());
 
-// Endpoint /cambio para Scriptable
+// Webhook endpoint para Telegram
+app.post(`/bot${TELEGRAM_TOKEN}`, (req, res) => {
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
+
+// Endpoint API para Scriptable
 app.get("/cambio", async (req, res) => {
   const rate = await getBRLtoARS();
   if (rate) {
@@ -71,4 +81,15 @@ app.get("/cambio", async (req, res) => {
 // Health check
 app.get("/", (req, res) => res.send("Bot + API funcionando!"));
 
-app.listen(PORT, () => console.log(`API rodando na porta ${PORT}`));
+// =================== START ===================
+app.listen(PORT, async () => {
+  console.log(`API rodando na porta ${PORT}`);
+
+  // Configura webhook
+  try {
+    await bot.setWebHook(`${BASE_URL}/bot${TELEGRAM_TOKEN}`);
+    console.log("Webhook configurado com sucesso!");
+  } catch (err) {
+    console.error("Erro ao configurar webhook:", err);
+  }
+});
