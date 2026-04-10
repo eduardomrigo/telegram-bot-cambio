@@ -48,10 +48,12 @@ async function getBRLtoARS() {
     const brlData = await brlRes.json();
     const arsData = await arsRes.json();
 
-    const usdtPerBrl = parseFloat(brlData.payload.last);
-    const usdtPerArs = parseFloat(arsData.payload.last);
+    const usdtAskBrl = parseFloat(brlData.payload.ask);
+    const usdtBidArs = parseFloat(arsData.payload.bid);
 
-    return (usdtPerArs / usdtPerBrl).toFixed(2);
+    // Spread de ~1.5% que a Bitso aplica na conversão direta
+    const rate = (usdtBidArs / usdtAskBrl) * 0.985;
+    return rate.toFixed(2);
   } catch (error) {
     console.error("Erro ao buscar cotação:", error);
     return null;
