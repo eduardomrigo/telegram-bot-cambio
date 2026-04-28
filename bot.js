@@ -20,25 +20,33 @@ bot.onText(/\/start/, (msg) => {
 bot.onText(/\/cambio/, async (msg) => {
   const chatId = msg.chat.id;
   const loadingMsg = await bot.sendMessage(chatId, "⏳ Buscando cotação...");
-  
-  const rate = await getBRLtoARS();
-  
-  if (rate) {
-    await bot.editMessageText(`💰 <b>${rate} ARS</b>`, {
-      chat_id: chatId,
-      message_id: loadingMsg.message_id,
-      parse_mode: "HTML"
-    });
-  } else {
+
+  const [bitso, astropay] = await Promise.all([
+    getBitsoRate(),
+    getAstropayRate()
+  ]);
+
+  if (!bitso && !astropay) {
     await bot.editMessageText("❌ Erro ao buscar cotação.", {
       chat_id: chatId,
       message_id: loadingMsg.message_id
     });
+    return;
   }
+
+  const lines = ["💰 <b>Cotação BRL → ARS</b>", ""];
+  lines.push(bitso ? `• Bitso: <b>${bitso} ARS</b>` : "• Bitso: ❌");
+  lines.push(astropay ? `• AstroPay: <b>${astropay.exchange} ARS</b>` : "• AstroPay: ❌");
+
+  await bot.editMessageText(lines.join("\n"), {
+    chat_id: chatId,
+    message_id: loadingMsg.message_id,
+    parse_mode: "HTML"
+  });
 });
 
-// =================== FUNÇÃO COTAÇÃO ===================
-async function getBRLtoARS() {
+// =================== FONTES DE COTAÇÃO ===================
+async function getBitsoRate() {
   try {
     const [brlRes, arsRes] = await Promise.all([
       fetch("https://api.bitso.com/v3/ticker/?book=usdt_brl"),
@@ -55,7 +63,32 @@ async function getBRLtoARS() {
     const rate = (usdtBidArs / usdtAskBrl) * 0.985;
     return rate.toFixed(2);
   } catch (error) {
-    console.error("Erro ao buscar cotação:", error);
+    console.error("Erro Bitso:", error);
+    return null;
+  }
+}
+
+async function getAstropayRate() {
+  try {
+    const res = await fetch("https://partners-api.astropay.com/v1/public/exchanges", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ from: "brl", to: "ars" })
+    });
+
+    if (!res.ok) {
+      console.error(`AstroPay exchanges ${res.status}: ${await res.text()}`);
+      return null;
+    }
+
+    const data = await res.json();
+    return {
+      exchange: parseFloat(data.exchange).toFixed(2),
+      official: parseFloat(data.official_exchange).toFixed(2),
+      spread: parseFloat(data.spread).toFixed(2)
+    };
+  } catch (error) {
+    console.error("Erro AstroPay:", error);
     return null;
   }
 }
@@ -72,12 +105,17 @@ app.post(`/bot${TELEGRAM_TOKEN}`, (req, res) => {
 
 // Endpoint API para Scriptable
 app.get("/cambio", async (req, res) => {
-  const rate = await getBRLtoARS();
-  if (rate) {
-    res.json({ rate });
-  } else {
-    res.status(500).json({ error: "Erro ao buscar cotação" });
+  const [bitso, astropay] = await Promise.all([
+    getBitsoRate(),
+    getAstropayRate()
+  ]);
+
+  if (!bitso && !astropay) {
+    return res.status(500).json({ error: "Erro ao buscar cotação" });
   }
+
+  // Mantém `rate` por retrocompat (Scriptable widget)
+  res.json({ rate: bitso, bitso, astropay });
 });
 
 // Health check
